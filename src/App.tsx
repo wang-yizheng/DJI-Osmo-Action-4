@@ -36,8 +36,8 @@ function App() {
 
     // Scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0a0f);
-    scene.fog = new THREE.Fog(0x0a0a0f, 15, 30);
+    scene.background = new THREE.Color(0xf5f5f7);
+    scene.fog = new THREE.Fog(0xf5f5f7, 15, 30);
 
     // Camera
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
@@ -56,35 +56,35 @@ function App() {
     container.appendChild(renderer.domElement);
 
     // Lights
-    const ambientLight = new THREE.AmbientLight(0x404060, 0.5);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
     scene.add(ambientLight);
 
-    const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
     mainLight.position.set(5, 8, 5);
     mainLight.castShadow = true;
     mainLight.shadow.mapSize.width = 2048;
     mainLight.shadow.mapSize.height = 2048;
     scene.add(mainLight);
 
-    const fillLight = new THREE.DirectionalLight(0x4488ff, 0.4);
+    const fillLight = new THREE.DirectionalLight(0xc8d8ff, 0.6);
     fillLight.position.set(-5, 3, -5);
     scene.add(fillLight);
 
-    const rimLight = new THREE.DirectionalLight(0xff8844, 0.3);
+    const rimLight = new THREE.DirectionalLight(0xffeedd, 0.4);
     rimLight.position.set(0, -3, 5);
     scene.add(rimLight);
 
-    // Point lights for dramatic effect
-    const pointLight1 = new THREE.PointLight(0x0066ff, 0.5, 10);
+    // Point lights for soft effect
+    const pointLight1 = new THREE.PointLight(0x4488ff, 0.3, 10);
     pointLight1.position.set(-3, 2, 3);
     scene.add(pointLight1);
 
-    const pointLight2 = new THREE.PointLight(0xff4400, 0.3, 10);
+    const pointLight2 = new THREE.PointLight(0xff6633, 0.2, 10);
     pointLight2.position.set(3, -2, -3);
     scene.add(pointLight2);
 
-    // Grid helper (subtle)
-    const gridHelper = new THREE.GridHelper(20, 40, 0x1a1a3a, 0x0f0f1f);
+    // Grid helper (subtle, light theme)
+    const gridHelper = new THREE.GridHelper(20, 40, 0xd0d0d8, 0xe8e8ee);
     gridHelper.position.y = -4;
     scene.add(gridHelper);
 
@@ -342,7 +342,7 @@ function App() {
   const hoveredInfo = hoveredModule !== null && modules[hoveredModule] ? modules[hoveredModule] : null;
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-[#0a0a0f]">
+    <div className="w-full h-full relative overflow-hidden bg-[#f5f5f7]">
       {/* 3D Canvas Container */}
       <div ref={containerRef} className="absolute inset-0" />
 
@@ -350,10 +350,10 @@ function App() {
       <div className="absolute top-0 left-0 right-0 p-4 md:p-6 pointer-events-none z-10">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl md:text-3xl font-bold text-white tracking-tight">
+            <h1 className="text-xl md:text-3xl font-bold text-gray-900 tracking-tight">
               DJI Osmo Action 4
             </h1>
-            <p className="text-xs md:text-sm text-gray-400 mt-1">
+            <p className="text-xs md:text-sm text-gray-500 mt-1">
               交互式3D结构拆解 · Interactive 3D Teardown
             </p>
           </div>
@@ -362,8 +362,8 @@ function App() {
               onClick={() => setShowLabels(!showLabels)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                 showLabels
-                  ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                  : 'bg-gray-800/50 text-gray-400 border border-gray-700/30'
+                  ? 'bg-blue-500/10 text-blue-600 border border-blue-300/50'
+                  : 'bg-white/70 text-gray-500 border border-gray-200/60'
               }`}
             >
               标签
@@ -372,8 +372,8 @@ function App() {
               onClick={() => setAutoRotate(!autoRotate)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                 autoRotate
-                  ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                  : 'bg-gray-800/50 text-gray-400 border border-gray-700/30'
+                  ? 'bg-blue-500/10 text-blue-600 border border-blue-300/50'
+                  : 'bg-white/70 text-gray-500 border border-gray-200/60'
               }`}
             >
               自动旋转
@@ -384,11 +384,11 @@ function App() {
 
       {/* Explode Slider */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 w-[90%] max-w-md">
-        <div className="bg-gray-900/80 backdrop-blur-xl rounded-2xl p-4 border border-gray-700/30">
+        <div className="bg-white/80 backdrop-blur-xl rounded-2xl p-4 border border-gray-200/60 shadow-lg shadow-black/5">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-400">组装</span>
-            <span className="text-xs text-gray-300 font-medium">拆解程度</span>
-            <span className="text-xs text-gray-400">完全展开</span>
+            <span className="text-xs text-gray-500">组装</span>
+            <span className="text-xs text-gray-700 font-medium">拆解程度</span>
+            <span className="text-xs text-gray-500">完全展开</span>
           </div>
           <input
             type="range"
@@ -398,14 +398,16 @@ function App() {
             value={explodeProgress}
             onChange={(e) => handleExplodeChange(parseFloat(e.target.value))}
             className="w-full h-2 rounded-full appearance-none cursor-pointer
-              bg-gradient-to-r from-blue-900 via-purple-800 to-orange-700
+              bg-gradient-to-r from-blue-200 via-purple-300 to-orange-300
               [&::-webkit-slider-thumb]:appearance-none
               [&::-webkit-slider-thumb]:w-5
               [&::-webkit-slider-thumb]:h-5
               [&::-webkit-slider-thumb]:rounded-full
               [&::-webkit-slider-thumb]:bg-white
               [&::-webkit-slider-thumb]:shadow-lg
-              [&::-webkit-slider-thumb]:shadow-blue-500/30
+              [&::-webkit-slider-thumb]:shadow-blue-400/40
+              [&::-webkit-slider-thumb]:border
+              [&::-webkit-slider-thumb]:border-gray-200
               [&::-webkit-slider-thumb]:cursor-pointer
               [&::-webkit-slider-thumb]:transition-transform
               [&::-webkit-slider-thumb]:hover:scale-110"
@@ -413,19 +415,19 @@ function App() {
           <div className="flex justify-between mt-2">
             <button
               onClick={() => handleExplodeChange(0)}
-              className="text-xs text-gray-400 hover:text-white transition-colors px-2 py-1 rounded bg-gray-800/50"
+              className="text-xs text-gray-500 hover:text-gray-800 transition-colors px-2 py-1 rounded bg-gray-100/80 hover:bg-gray-200/80"
             >
               复原
             </button>
             <button
               onClick={() => handleExplodeChange(0.5)}
-              className="text-xs text-gray-400 hover:text-white transition-colors px-2 py-1 rounded bg-gray-800/50"
+              className="text-xs text-gray-500 hover:text-gray-800 transition-colors px-2 py-1 rounded bg-gray-100/80 hover:bg-gray-200/80"
             >
               半展开
             </button>
             <button
               onClick={() => handleExplodeChange(1)}
-              className="text-xs text-gray-400 hover:text-white transition-colors px-2 py-1 rounded bg-gray-800/50"
+              className="text-xs text-gray-500 hover:text-gray-800 transition-colors px-2 py-1 rounded bg-gray-100/80 hover:bg-gray-200/80"
             >
               全展开
             </button>
@@ -444,10 +446,10 @@ function App() {
               onMouseLeave={() => setHoveredModule(null)}
               className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-all duration-200 ${
                 selectedModule === index
-                  ? 'bg-blue-500/20 border border-blue-500/40 scale-105'
+                  ? 'bg-blue-50 border border-blue-200 scale-105 shadow-sm'
                   : hoveredModule === index
-                  ? 'bg-gray-800/60 border border-gray-600/30'
-                  : 'bg-gray-900/40 border border-transparent hover:bg-gray-800/40'
+                  ? 'bg-white/80 border border-gray-200 shadow-sm'
+                  : 'bg-white/50 border border-transparent hover:bg-white/70'
               }`}
             >
               <div
@@ -455,7 +457,7 @@ function App() {
                 style={{ backgroundColor: module.color }}
               />
               {showLabels && (
-                <span className="text-[10px] md:text-xs text-gray-300 whitespace-nowrap">
+                <span className="text-[10px] md:text-xs text-gray-700 whitespace-nowrap">
                   {module.name}
                 </span>
               )}
@@ -467,25 +469,25 @@ function App() {
       {/* Module Info Panel - Right Side */}
       {(currentModule || hoveredInfo) && (
         <div className="absolute right-3 md:right-6 top-1/2 -translate-y-1/2 z-10 pointer-events-auto max-w-[260px]">
-          <div className="bg-gray-900/80 backdrop-blur-xl rounded-2xl p-4 border border-gray-700/30">
+          <div className="bg-white/80 backdrop-blur-xl rounded-2xl p-4 border border-gray-200/60 shadow-lg shadow-black/5">
             <div className="flex items-center gap-2 mb-3">
               <div
                 className="w-3 h-3 rounded-full"
                 style={{ backgroundColor: (currentModule || hoveredInfo)!.color }}
               />
-              <h3 className="text-sm font-bold text-white">
+              <h3 className="text-sm font-bold text-gray-900">
                 {(currentModule || hoveredInfo)!.name}
               </h3>
             </div>
-            <p className="text-xs text-gray-400 mb-2">
+            <p className="text-xs text-gray-500 mb-2">
               {(currentModule || hoveredInfo)!.nameEn}
             </p>
-            <p className="text-xs text-gray-300 leading-relaxed">
+            <p className="text-xs text-gray-600 leading-relaxed">
               {(currentModule || hoveredInfo)!.description}
             </p>
             {selectedModule !== null && (
-              <div className="mt-3 pt-3 border-t border-gray-700/30">
-                <p className="text-[10px] text-gray-500">
+              <div className="mt-3 pt-3 border-t border-gray-200/60">
+                <p className="text-[10px] text-gray-400">
                   模块 {selectedModule + 1} / 9
                 </p>
               </div>
@@ -496,30 +498,30 @@ function App() {
 
       {/* Instructions */}
       <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-        <p className="text-[10px] text-gray-500 text-center">
+        <p className="text-[10px] text-gray-400 text-center">
           拖拽旋转 · 滚轮缩放 · 点击选择模块
         </p>
       </div>
 
       {/* Corner decorations */}
       <div className="absolute top-0 left-0 w-20 h-20 pointer-events-none">
-        <svg viewBox="0 0 80 80" className="w-full h-full opacity-20">
-          <path d="M0 20 L0 0 L20 0" fill="none" stroke="#3b82f6" strokeWidth="1" />
+        <svg viewBox="0 0 80 80" className="w-full h-full opacity-30">
+          <path d="M0 20 L0 0 L20 0" fill="none" stroke="#94a3b8" strokeWidth="1" />
         </svg>
       </div>
       <div className="absolute top-0 right-0 w-20 h-20 pointer-events-none">
-        <svg viewBox="0 0 80 80" className="w-full h-full opacity-20">
-          <path d="M60 0 L80 0 L80 20" fill="none" stroke="#3b82f6" strokeWidth="1" />
+        <svg viewBox="0 0 80 80" className="w-full h-full opacity-30">
+          <path d="M60 0 L80 0 L80 20" fill="none" stroke="#94a3b8" strokeWidth="1" />
         </svg>
       </div>
       <div className="absolute bottom-0 left-0 w-20 h-20 pointer-events-none">
-        <svg viewBox="0 0 80 80" className="w-full h-full opacity-20">
-          <path d="M0 60 L0 80 L20 80" fill="none" stroke="#3b82f6" strokeWidth="1" />
+        <svg viewBox="0 0 80 80" className="w-full h-full opacity-30">
+          <path d="M0 60 L0 80 L20 80" fill="none" stroke="#94a3b8" strokeWidth="1" />
         </svg>
       </div>
       <div className="absolute bottom-0 right-0 w-20 h-20 pointer-events-none">
-        <svg viewBox="0 0 80 80" className="w-full h-full opacity-20">
-          <path d="M60 80 L80 80 L80 60" fill="none" stroke="#3b82f6" strokeWidth="1" />
+        <svg viewBox="0 0 80 80" className="w-full h-full opacity-30">
+          <path d="M60 80 L80 80 L80 60" fill="none" stroke="#94a3b8" strokeWidth="1" />
         </svg>
       </div>
     </div>

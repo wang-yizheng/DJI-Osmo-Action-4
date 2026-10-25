@@ -65,11 +65,12 @@ function createShellModule(): ModuleInfo {
   const shellMat = new THREE.MeshPhysicalMaterial({
     map: shellTex,
     color: 0x1a1a2e,
-    roughness: 0.6,
+    roughness: 0.5,
     metalness: 0.3,
-    clearcoat: 0.3,
+    clearcoat: 0.5,
+    clearcoatRoughness: 0.2,
     transparent: true,
-    opacity: 0.85,
+    opacity: 0.88,
   });
   const shell = new THREE.Mesh(shellGeo, shellMat);
   group.add(shell);
