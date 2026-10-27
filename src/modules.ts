@@ -170,16 +170,18 @@ function createLensModule(): ModuleInfo {
   group.add(barrel);
 
   // Lens elements (multiple glass elements)
+  // 性能优化：贴图只生成一次并被 4 个镜片共享；降低球体细分段数；
+  // 用 ior/opacity 近似玻璃质感，避免 transmission 触发每帧透射渲染通道（开销极大）
+  const sharedLensTex = createLensTexture();
   for (let i = 0; i < 4; i++) {
-    const lensGeo = new THREE.SphereGeometry(0.4 - i * 0.05, 32, 16, 0, Math.PI * 2, 0, Math.PI / 3);
-    const lensTex = createLensTexture();
+    const lensGeo = new THREE.SphereGeometry(0.4 - i * 0.05, 24, 12, 0, Math.PI * 2, 0, Math.PI / 3);
     const lensMat = new THREE.MeshPhysicalMaterial({
-      map: lensTex,
+      map: sharedLensTex,
       color: 0x1a0a3a,
       roughness: 0.0,
       metalness: 0.1,
-      transmission: 0.6,
-      thickness: 0.5,
+      ior: 1.5,
+      reflectivity: 0.5,
       transparent: true,
       opacity: 0.9,
     });
@@ -195,7 +197,7 @@ function createLensModule(): ModuleInfo {
     color: 0x0a0a2a,
     roughness: 0.0,
     metalness: 0.1,
-    transmission: 0.8,
+    ior: 1.5,
     transparent: true,
     opacity: 0.7,
   });
@@ -310,7 +312,7 @@ function createLCDModule(): ModuleInfo {
     color: 0x111111,
     roughness: 0.0,
     metalness: 0.1,
-    transmission: 0.3,
+    ior: 1.5,
     transparent: true,
     opacity: 0.4,
   });
@@ -789,4 +791,24 @@ export function createAllModules(): ModuleInfo[] {
     createMicModule(),
     createUSBModule(),
   ];
+}
+
+// 释放模块占用的 GPU 资源（几何体/材质/贴图），防止上下文泄漏
+export function disposeAllModules(modules: ModuleInfo[]): void {
+  modules.forEach((module) => {
+    module.group.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      materials.forEach((mat) => {
+        if (!mat) return;
+        // 释放材质上引用的所有贴图
+        Object.values(mat as unknown as Record<string, unknown>).forEach((value) => {
+          if (value instanceof THREE.Texture) value.dispose();
+        });
+        mat.dispose();
+      });
+    });
+  });
 }
