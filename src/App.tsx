@@ -1,33 +1,91 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { createAllModules, ModuleInfo } from './modules';
+import { createAllModules, disposeAllModules, ModuleInfo } from './modules';
+
+// 模块列表静态信息（不含 Three.js 对象），供 React UI 渲染，避免持有整个场景引用
+interface ModuleMeta {
+  name: string;
+  nameEn: string;
+  description: string;
+  color: string;
+}
+
+// 交互状态全部存放在 ref 中，避免状态变化导致 WebGL 上下文销毁重建
+interface SceneState {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  modules: ModuleInfo[];
+  raycaster: THREE.Raycaster;
+  mouse: THREE.Vector2;
+  mouseActive: boolean; // 鼠标是否在画布内
+  pointerMoved: boolean; // 自上次拾取后指针是否移动过
+  isDragging: boolean;
+  previousMousePosition: { x: number; y: number };
+  cameraAngle: { theta: number; phi: number };
+  cameraDistance: number;
+  animationProgress: number;
+  targetProgress: number;
+  hoveredModule: number | null;
+  selectedModule: number | null;
+}
+
+// 渲染帧率上限：避免在高刷新率屏幕上做无意义的多余绘制
+const MAX_FPS = 60;
+const FRAME_INTERVAL = 1000 / MAX_FPS;
+// 悬停拾取的节流间隔（不必每帧都做射线检测）
+const HOVER_INTERVAL = 80;
+
+// 模块高亮/恢复用的发光强度常量
+const EMISSIVE_HOVER = 0.3;
 
 function App() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<{
-    scene: THREE.Scene;
-    camera: THREE.PerspectiveCamera;
-    renderer: THREE.WebGLRenderer;
-    modules: ModuleInfo[];
-    raycaster: THREE.Raycaster;
-    mouse: THREE.Vector2;
-    isDragging: boolean;
-    previousMousePosition: { x: number; y: number };
-    cameraAngle: { theta: number; phi: number };
-    cameraDistance: number;
-    animationProgress: number;
-    targetProgress: number;
-    hoveredModule: number | null;
-    selectedModule: number | null;
-  } | null>(null);
+  const sceneRef = useRef<SceneState | null>(null);
+  // 供动画循环读取的最新 UI 开关状态（用 ref 而非闭包捕获，避免重建场景）
+  const autoRotateRef = useRef(true);
+  const baseEmissiveRef = useRef<Map<THREE.Material, number>>(new Map());
 
   const [explodeProgress, setExplodeProgress] = useState(0);
   const [selectedModule, setSelectedModule] = useState<number | null>(null);
   const [hoveredModule, setHoveredModule] = useState<number | null>(null);
   const [showLabels, setShowLabels] = useState(true);
   const [autoRotate, setAutoRotate] = useState(true);
+  // 场景初始化完成后同步模块元数据到 React state（供 UI 渲染，一次性）
+  const [modules, setModules] = useState<ModuleMeta[]>([]);
+  // 列表悬停（UI-only），与 3D 射线拾取的高亮分开维护，避免相互覆盖
+  const [listHovered, setListHovered] = useState<number | null>(null);
+  const listHoveredRef = useRef<number | null>(null);
 
-  const initScene = useCallback(() => {
+  // autoRotate 变化时只更新 ref，不重建场景
+  useEffect(() => {
+    autoRotateRef.current = autoRotate;
+  }, [autoRotate]);
+
+  // 选中/列表悬停变化时，统一刷新 3D 场景中的高亮状态
+  useEffect(() => {
+    const state = sceneRef.current;
+    if (!state) return;
+    const applyToModule = (index: number | null, on: boolean) => {
+      if (index === null) return;
+      state.modules[index].group.children.forEach((child) => {
+        const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        if (mat && mat.emissive) {
+          mat.emissiveIntensity = on ? EMISSIVE_HOVER : baseEmissiveRef.current.get(mat) ?? 1;
+        }
+      });
+    };
+    // 清除旧的选中/列表悬停高亮
+    applyToModule(state.selectedModule, false);
+    applyToModule(listHoveredRef.current, false);
+    // 应用新的高亮（3D 射线悬停优先级更高，由动画循环维护）
+    state.selectedModule = selectedModule;
+    listHoveredRef.current = listHovered;
+    applyToModule(selectedModule !== null ? selectedModule : listHovered, true);
+  }, [selectedModule, listHovered]);
+
+  // 场景只初始化一次（空依赖），所有动态状态通过 ref 传递
+  useEffect(() => {
     if (!containerRef.current) return;
 
     const container = containerRef.current;
@@ -42,10 +100,12 @@ function App() {
     // Camera
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
 
-    // Renderer
+    // Renderer（powerPreference 提示 GPU 使用高性能模式；关闭无用功能）
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
+      powerPreference: 'high-performance',
+      stencil: false,
     });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -62,8 +122,17 @@ function App() {
     const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
     mainLight.position.set(5, 8, 5);
     mainLight.castShadow = true;
-    mainLight.shadow.mapSize.width = 2048;
-    mainLight.shadow.mapSize.height = 2048;
+    // 阴影贴图从 2048 降到 1024：显存占用降为 1/4，视觉差异很小
+    mainLight.shadow.mapSize.width = 1024;
+    mainLight.shadow.mapSize.height = 1024;
+    // 限定阴影相机视锥，提高贴图利用率
+    mainLight.shadow.camera.near = 1;
+    mainLight.shadow.camera.far = 25;
+    mainLight.shadow.camera.left = -8;
+    mainLight.shadow.camera.right = 8;
+    mainLight.shadow.camera.top = 8;
+    mainLight.shadow.camera.bottom = -8;
+    mainLight.shadow.bias = -0.0005;
     scene.add(mainLight);
 
     const fillLight = new THREE.DirectionalLight(0xc8d8ff, 0.6);
@@ -95,51 +164,137 @@ function App() {
       module.group.position.copy(module.assembledPosition);
     });
 
+    // 记录每个材质原始的 emissiveIntensity，用于高亮后精确恢复
+    const baseEmissive = baseEmissiveRef.current;
+    baseEmissive.clear();
+    modules.forEach((module) => {
+      module.group.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+        if (mat && !Array.isArray(mat) && 'emissive' in mat) {
+          const pm = mat as THREE.MeshStandardMaterial;
+          baseEmissive.set(pm, pm.emissiveIntensity ?? 1);
+        }
+      });
+    });
+
     // State
-    const state = {
+    const state: SceneState = {
       scene,
       camera,
       renderer,
       modules,
       raycaster: new THREE.Raycaster(),
       mouse: new THREE.Vector2(),
+      mouseActive: false,
+      pointerMoved: false,
       isDragging: false,
       previousMousePosition: { x: 0, y: 0 },
       cameraAngle: { theta: 0.5, phi: 0.8 },
       cameraDistance: 8,
       animationProgress: 0,
       targetProgress: 0,
-      hoveredModule: null as number | null,
-      selectedModule: null as number | null,
+      hoveredModule: null,
+      selectedModule: null,
     };
 
     sceneRef.current = state;
+    // 同步模块元数据到 UI（一次性，仅存轻量字段）
+    setModules(
+      modules.map((m) => ({ name: m.name, nameEn: m.nameEn, description: m.description, color: m.color }))
+    );
 
-    // Animation loop
-    const animate = () => {
-      requestAnimationFrame(animate);
+    // 复用临时向量，避免每帧在动画循环里分配新对象造成 GC 压力
+    const tmpTargetPos = new THREE.Vector3();
 
-      // Smooth progress interpolation
-      state.animationProgress += (state.targetProgress - state.animationProgress) * 0.05;
+    // 设置模块悬停高亮（只在变化时更新材质）
+    const applyHoverHighlight = (index: number | null) => {
+      if (state.hoveredModule === index) return;
+      const prev = state.hoveredModule;
+      state.hoveredModule = index;
+
+      // 恢复上一个悬停模块（若未被选中）
+      if (prev !== null && prev !== state.selectedModule) {
+        state.modules[prev].group.children.forEach((child) => {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat && mat.emissive) {
+            mat.emissiveIntensity = baseEmissive.get(mat) ?? 1;
+          }
+        });
+      }
+      // 高亮当前模块
+      if (index !== null) {
+        state.modules[index].group.children.forEach((child) => {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat && mat.emissive) {
+            mat.emissiveIntensity = EMISSIVE_HOVER;
+          }
+        });
+      }
+      setHoveredModule(index);
+    };
+
+    // 射线拾取：按深度找最近命中的模块（原实现按模块顺序返回，会误选后面的模块）
+    const pickModule = (): number | null => {
+      state.raycaster.setFromCamera(state.mouse, camera);
+      let best: number | null = null;
+      let bestDist = Infinity;
+      for (let i = 0; i < state.modules.length; i++) {
+        const intersects = state.raycaster.intersectObjects(state.modules[i].group.children, true);
+        if (intersects.length > 0 && intersects[0].distance < bestDist) {
+          bestDist = intersects[0].distance;
+          best = i;
+        }
+      }
+      return best;
+    };
+
+    // 是否需要继续渲染（有动画进行中 / 自动旋转 / 交互中）
+    let rafId = 0;
+    let lastTime = 0;
+    let lastHoverTime = 0;
+
+    const animate = (time: number) => {
+      rafId = requestAnimationFrame(animate);
+
+      // 帧率上限控制：跳过过快的帧
+      if (time - lastTime < FRAME_INTERVAL) return;
+      const dt = Math.min((time - lastTime) / 1000, 0.1);
+      lastTime = time;
+
+      // 页面不可见时不渲染
+      if (document.hidden) return;
+
+      const progressDelta = Math.abs(state.targetProgress - state.animationProgress);
+      const animating = progressDelta > 0.0005 || state.isDragging || autoRotateRef.current;
+
+      // 静止且无动画时跳过本帧渲染
+      if (!animating && !state.pointerMoved) {
+        return;
+      }
+
+      // 拆解进度插值（与帧率无关的平滑系数）
+      const lerpFactor = 1 - Math.pow(1 - 0.05, dt * 60);
+      state.animationProgress += (state.targetProgress - state.animationProgress) * lerpFactor;
 
       // Update module positions based on progress
       state.modules.forEach((module) => {
-        const targetPos = new THREE.Vector3().lerpVectors(
+        tmpTargetPos.lerpVectors(
           module.assembledPosition,
           module.explodedPosition,
           state.animationProgress
         );
-        module.group.position.lerp(targetPos, 0.1);
+        module.group.position.lerp(tmpTargetPos, 1 - Math.pow(1 - 0.1, dt * 60));
 
         // Add subtle rotation when exploded
         if (state.animationProgress > 0.1) {
-          module.group.rotation.y += 0.001 * state.animationProgress;
+          module.group.rotation.y += 0.001 * state.animationProgress * (dt * 60);
         }
       });
 
       // Auto rotate
-      if (autoRotate && !state.isDragging) {
-        state.cameraAngle.theta += 0.003;
+      if (autoRotateRef.current && !state.isDragging) {
+        state.cameraAngle.theta += 0.003 * (dt * 60);
       }
 
       // Update camera position
@@ -149,67 +304,49 @@ function App() {
       camera.position.set(x, y, z);
       camera.lookAt(0, 0, 0);
 
-      // Hover highlight
-      state.raycaster.setFromCamera(state.mouse, camera);
-      let foundHover = false;
-      state.modules.forEach((module, index) => {
-        const intersects = state.raycaster.intersectObjects(module.group.children, true);
-        if (intersects.length > 0 && !foundHover) {
-          state.hoveredModule = index;
-          foundHover = true;
-          setHoveredModule(index);
-          // Highlight
-          module.group.children.forEach((child) => {
-            if ((child as THREE.Mesh).material) {
-              const mat = (child as THREE.Mesh).material as THREE.MeshPhysicalMaterial;
-              if (mat.emissive) {
-                mat.emissiveIntensity = 0.3;
-              }
-            }
-          });
+      // 悬停拾取：仅在指针移动且距上次拾取超过节流间隔时执行
+      if (state.pointerMoved && time - lastHoverTime > HOVER_INTERVAL) {
+        lastHoverTime = time;
+        state.pointerMoved = false;
+        if (state.mouseActive && !state.isDragging) {
+          applyHoverHighlight(pickModule());
         } else {
-          // Reset highlight
-          module.group.children.forEach((child) => {
-            if ((child as THREE.Mesh).material) {
-              const mat = (child as THREE.Mesh).material as THREE.MeshPhysicalMaterial;
-              if (mat.emissive && index !== state.selectedModule) {
-                mat.emissiveIntensity = mat.emissiveIntensity > 0 ? Math.max(0, mat.emissiveIntensity - 0.02) : 0;
-              }
-            }
-          });
+          applyHoverHighlight(null);
         }
-      });
-      if (!foundHover) {
-        state.hoveredModule = null;
-        setHoveredModule(null);
       }
 
       renderer.render(scene, camera);
     };
 
-    animate();
+    rafId = requestAnimationFrame(animate);
 
-    // Handle resize
+    // Handle resize（去抖，避免拖拽窗口时频繁重建渲染缓冲）
+    let resizeTimer = 0;
     const handleResize = () => {
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }, 150);
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(resizeTimer);
       window.removeEventListener('resize', handleResize);
+      sceneRef.current = null;
+      // 完整释放 GPU 资源，防止 WebGL 上下文泄漏
+      disposeAllModules(modules);
       renderer.dispose();
-      container.removeChild(renderer.domElement);
+      if (renderer.domElement.parentNode === container) {
+        container.removeChild(renderer.domElement);
+      }
     };
-  }, [autoRotate]);
-
-  useEffect(() => {
-    const cleanup = initScene();
-    return cleanup;
-  }, [initScene]);
+  }, []);
 
   // Mouse/touch handlers
   useEffect(() => {
@@ -222,27 +359,39 @@ function App() {
       sceneRef.current.previousMousePosition = { x: e.clientX, y: e.clientY };
     };
 
+    // 快进缓存，避免同一事件内多次调用 getBoundingClientRect 触发强制重排
     const handleMouseMove = (e: MouseEvent) => {
-      if (!sceneRef.current) return;
+      const state = sceneRef.current;
+      if (!state) return;
       const rect = container.getBoundingClientRect();
-      sceneRef.current.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      sceneRef.current.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      state.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      state.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      state.mouseActive = true;
+      state.pointerMoved = true;
 
-      if (sceneRef.current.isDragging) {
-        const deltaX = e.clientX - sceneRef.current.previousMousePosition.x;
-        const deltaY = e.clientY - sceneRef.current.previousMousePosition.y;
-        sceneRef.current.cameraAngle.theta -= deltaX * 0.005;
-        sceneRef.current.cameraAngle.phi = Math.max(
+      if (state.isDragging) {
+        const deltaX = e.clientX - state.previousMousePosition.x;
+        const deltaY = e.clientY - state.previousMousePosition.y;
+        state.cameraAngle.theta -= deltaX * 0.005;
+        state.cameraAngle.phi = Math.max(
           0.2,
-          Math.min(Math.PI - 0.2, sceneRef.current.cameraAngle.phi + deltaY * 0.005)
+          Math.min(Math.PI - 0.2, state.cameraAngle.phi + deltaY * 0.005)
         );
-        sceneRef.current.previousMousePosition = { x: e.clientX, y: e.clientY };
+        state.previousMousePosition = { x: e.clientX, y: e.clientY };
       }
     };
 
     const handleMouseUp = () => {
       if (!sceneRef.current) return;
       sceneRef.current.isDragging = false;
+    };
+
+    const handleMouseLeave = () => {
+      const state = sceneRef.current;
+      if (!state) return;
+      state.isDragging = false;
+      state.mouseActive = false;
+      state.pointerMoved = true; // 让动画循环清除悬停高亮
     };
 
     const handleWheel = (e: WheelEvent) => {
@@ -255,25 +404,48 @@ function App() {
     };
 
     const handleClick = (e: MouseEvent) => {
-      if (!sceneRef.current) return;
+      const state = sceneRef.current;
+      if (!state) return;
       const rect = container.getBoundingClientRect();
-      sceneRef.current.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      sceneRef.current.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      state.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      state.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
-      sceneRef.current.raycaster.setFromCamera(sceneRef.current.mouse, sceneRef.current.camera);
-      for (let i = 0; i < sceneRef.current.modules.length; i++) {
-        const intersects = sceneRef.current.raycaster.intersectObjects(
-          sceneRef.current.modules[i].group.children,
+      // 按深度取最近命中的模块
+      state.raycaster.setFromCamera(state.mouse, state.camera);
+      let best: number | null = null;
+      let bestDist = Infinity;
+      for (let i = 0; i < state.modules.length; i++) {
+        const intersects = state.raycaster.intersectObjects(
+          state.modules[i].group.children,
           true
         );
-        if (intersects.length > 0) {
-          setSelectedModule(i);
-          sceneRef.current.selectedModule = i;
-          return;
+        if (intersects.length > 0 && intersects[0].distance < bestDist) {
+          bestDist = intersects[0].distance;
+          best = i;
         }
       }
-      setSelectedModule(null);
-      sceneRef.current.selectedModule = null;
+
+      // 维护选中模块的发光高亮
+      const prevSelected = state.selectedModule;
+      if (prevSelected !== null && prevSelected !== state.hoveredModule) {
+        state.modules[prevSelected].group.children.forEach((child) => {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat && mat.emissive) {
+            mat.emissiveIntensity = baseEmissiveRef.current.get(mat) ?? 1;
+          }
+        });
+      }
+      if (best !== null) {
+        state.modules[best].group.children.forEach((child) => {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat && mat.emissive) {
+            mat.emissiveIntensity = EMISSIVE_HOVER;
+          }
+        });
+      }
+
+      state.selectedModule = best;
+      setSelectedModule(best);
     };
 
     // Touch handlers
@@ -310,7 +482,7 @@ function App() {
     container.addEventListener('mousedown', handleMouseDown);
     container.addEventListener('mousemove', handleMouseMove);
     container.addEventListener('mouseup', handleMouseUp);
-    container.addEventListener('mouseleave', handleMouseUp);
+    container.addEventListener('mouseleave', handleMouseLeave);
     container.addEventListener('wheel', handleWheel, { passive: false });
     container.addEventListener('click', handleClick);
     container.addEventListener('touchstart', handleTouchStart, { passive: true });
@@ -321,7 +493,7 @@ function App() {
       container.removeEventListener('mousedown', handleMouseDown);
       container.removeEventListener('mousemove', handleMouseMove);
       container.removeEventListener('mouseup', handleMouseUp);
-      container.removeEventListener('mouseleave', handleMouseUp);
+      container.removeEventListener('mouseleave', handleMouseLeave);
       container.removeEventListener('wheel', handleWheel);
       container.removeEventListener('click', handleClick);
       container.removeEventListener('touchstart', handleTouchStart);
@@ -337,9 +509,9 @@ function App() {
     }
   };
 
-  const modules = sceneRef.current?.modules || [];
-  const currentModule = selectedModule !== null && modules[selectedModule] ? modules[selectedModule] : null;
-  const hoveredInfo = hoveredModule !== null && modules[hoveredModule] ? modules[hoveredModule] : null;
+  const currentModule = selectedModule !== null ? modules[selectedModule] ?? null : null;
+  const hoveredInfo =
+    listHovered !== null ? modules[listHovered] ?? null : hoveredModule !== null ? modules[hoveredModule] ?? null : null;
 
   return (
     <div className="w-full h-full relative overflow-hidden bg-[#f5f5f7]">
